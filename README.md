@@ -39,7 +39,8 @@ ChatGPTのAPIキー取得方法は以下の通りです。(詳細はこのペー
 
 * [OpenAIのウェブサイト](https://openai.com/ "Title")にアクセスして、アカウントを作成します。メールアドレスと携帯電話番号が必要です。
 * アカウント作成後、APIキーを発行します。APIキーは有料ですが、無料期間やクレジットがあります。
-* APIキーを取得したら、M5Unified_StackChan_ChatGPT.inoの107行目付近、YOUR_API_KEYを設定してください。
+* APIキーを取得したら、M5Unified_StackChan_ChatGPT.inoの107行目付近、YOUR_API_KEYを設定してください。<br>
+![画像4](images/image4.png)<br><br>
 
 
 ### VoiceText Wev API api キーの設定 ###
@@ -54,7 +55,7 @@ APIキーは、[ここ](https://cloud.voicetext.jp/webapi/ "Title")の「無料�
 ### 使い方 ###
 
 * 音声認識プログラムは別途ユーザーが用意する必要があります。<br>
-音声認識プログラムからこのようにhttpコマンドでテキストを渡します。<br>
+音声認識プログラムからこのようにhttpコマンドでテキスト(UTF-8)を渡します。<br>
 (テキストはURLエンコードして渡してください。)<br><br>
 http://XXX.XXX.XXX.XXX/chat?text=こんにちは<br><br>
 XXX.XXX.XXX.XXXの部分は起動時に表示されるM5StackのIPアドレスに置き換えてください。<br><br>
@@ -77,6 +78,9 @@ XXX.XXX.XXX.XXXの部分は起動時に表示されるM5StackのIPアドレス�
 
 ### ChatGPTのAPIキー取得の参考リンク ###
 
-* [ChatGPT API利用方法の簡単解説](https://qiita.com/mikito/items/b69f38c54b362c20e9e6/ "Title")
-<br><br>
+* [ChatGPT API利用方法の簡単解説](https://qiita.com/mikito/items/b69f38c54b362c20e9e6/ "Title")<br>
 
+### ChatGPTのキャラクター設定の参考リンク ###
+
+* [ChatGPTのAPIでキャラクター設定を試してみた](https://note.com/it_navi/n/nf5f702b36a75#8e42f887-fb07-4367-9f3f-ab7f119eb064/ "Title")<br>
+<br><br>
