@@ -15,24 +15,10 @@
 #include <ESP32WebServer.h>
 #include <ESPmDNS.h>
 
-const char *SSID = "YOUR_WIFI_SSID";
-const char *PASSWORD = "YOUR_WIFI_PASSWORD";
+#include "config.h"
 
-#define USE_SERVO
-#ifdef USE_SERVO
-#if defined(ARDUINO_M5STACK_Core2)
-//  #define SERVO_PIN_X 13  //Core2 PORT C
-//  #define SERVO_PIN_Y 14
-  #define SERVO_PIN_X 33  //Core2 PORT A
-  #define SERVO_PIN_Y 32
-#elif defined( ARDUINO_M5STACK_FIRE )
-  #define SERVO_PIN_X 21
-  #define SERVO_PIN_Y 22
-#elif defined( ARDUINO_M5Stack_Core_ESP32 )
-  #define SERVO_PIN_X 21
-  #define SERVO_PIN_Y 22
-#endif
-#endif
+const char *SSID = WIFI_SSID;
+const char *PASSWORD = WIFI_PASSPHRASE;
 
 using namespace m5avatar;
 Avatar avatar;
@@ -104,7 +90,7 @@ String https_post_json(const char* url, const char* json_string, const char* roo
         Serial.print("[HTTPS] POST...\n");
         // start connection and send HTTP header
         https.addHeader("Content-Type", "application/json");
-        https.addHeader("Authorization", "Bearer YOUR_API_KEY");
+        https.addHeader("Authorization", "Bearer " OPENAI_API_KEY);
         int httpCode = https.POST((uint8_t *)json_string, strlen(json_string));
   
         // httpCode will be negative on error

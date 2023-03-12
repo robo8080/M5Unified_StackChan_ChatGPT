@@ -1,0 +1,29 @@
+// Wi-Fi
+#define WIFI_SSID "YOUR_WIFI_SSID"
+#define WIFI_PASSPHRASE "YOUR_WIFI_PASSWORD"
+
+// Servo
+#define USE_SERVO
+#ifdef USE_SERVO
+#if defined(ARDUINO_M5STACK_Core2)
+//  #define SERVO_PIN_X 13  //Core2 PORT C
+//  #define SERVO_PIN_Y 14
+  #define SERVO_PIN_X 33  //Core2 PORT A
+  #define SERVO_PIN_Y 32
+#elif defined( ARDUINO_M5STACK_FIRE )
+  #define SERVO_PIN_X 21
+  #define SERVO_PIN_Y 22
+#elif defined( ARDUINO_M5Stack_Core_ESP32 )
+  #define SERVO_PIN_X 21
+  #define SERVO_PIN_Y 22
+#endif
+#endif
+
+// #VoiceText Web API
+// You should get apikey
+// visit https://cloud.voicetext.jp/webapi
+#define TTS_USER "YOUR_TSS_API_KEY" // set your id
+#define TTS_PASS "" // passwd is blank
+
+// OpenAI
+#define OPENAI_API_KEY "YOUR_API_KEY"
