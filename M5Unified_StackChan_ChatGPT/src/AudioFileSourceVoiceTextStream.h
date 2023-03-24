@@ -30,6 +30,8 @@
 #endif
 #include "AudioFileSource.h"
 
+extern String tts_user;
+
 class AudioFileSourceVoiceTextStream : public AudioFileSource
 {
   friend class AudioFileSourceICYStream;

@@ -1,4 +1,8 @@
+//#include <FS.h>
+#include <SD.h>
+#include <SPIFFS.h>
 #include <M5Unified.h>
+#include <nvs.h>
 #include <Avatar.h>
 
 #include <AudioOutput.h>
@@ -15,8 +19,11 @@
 #include <ESP32WebServer.h>
 #include <ESPmDNS.h>
 
-const char *SSID = "YOUR_WIFI_SSID";
-const char *PASSWORD = "YOUR_WIFI_PASSWORD";
+#define USE_SDCARD
+#define WIFI_SSID "SET YOUR WIFI SSID"
+#define WIFI_PASS "SET YOUR WIFI PASS"
+#define OPENAI_APIKEY "SET YOUR OPENAI APIKEY"
+#define VOICETEXT_APIKEY "SET YOUR VOICETEXT APIKEY"
 
 #define USE_SERVO
 #ifdef USE_SERVO
@@ -36,13 +43,27 @@ const char *PASSWORD = "YOUR_WIFI_PASSWORD";
 
 using namespace m5avatar;
 Avatar avatar;
+const Expression expressions_table[] = {
+  Expression::Neutral,
+  Expression::Happy,
+  Expression::Sleepy,
+  Expression::Doubt,
+  Expression::Sad,
+  Expression::Angry
+};
 
 ESP32WebServer server(80);
 
+String OPENAI_API_KEY = "";
+
 char *text1 = "みなさんこんにちは、私の名前はスタックチャンです、よろしくね。";
-char *tts_parms1 ="&emotion_level=4&emotion=happiness&format=mp3&speaker=takeru&volume=200&speed=100&pitch=130"; // he has natural(16kHz) wav voice
-char *tts_parms2 ="&emotion=happiness&format=mp3&speaker=hikari&volume=200&speed=120&pitch=130"; // he has natural(16kHz) wav voice
-char *tts_parms3 ="&emotion=anger&format=mp3&speaker=bear&volume=200&speed=120&pitch=100"; // he has natural(16kHz) wav voice
+char *tts_parms1 ="&emotion_level=4&emotion=happiness&format=mp3&speaker=takeru&volume=200&speed=100&pitch=130"; // he has natural(16kHz) mp3 voice
+char *tts_parms2 ="&emotion=happiness&format=mp3&speaker=hikari&volume=200&speed=120&pitch=130"; // he has natural(16kHz) mp3 voice
+char *tts_parms3 ="&emotion=anger&format=mp3&speaker=bear&volume=200&speed=120&pitch=100"; // he has natural(16kHz) mp3 voice
+char *tts_parms4 ="&emotion_level=2&emotion=happiness&format=mp3&speaker=haruka&volume=200&speed=80&pitch=70";
+char *tts_parms5 ="&emotion_level=4&emotion=happiness&format=mp3&speaker=santa&volume=200&speed=120&pitch=90";
+char *tts_parms_table[5] = {tts_parms1,tts_parms2,tts_parms3,tts_parms4,tts_parms5};
+int tts_parms_no = 1;
 
 // C++11 multiline string constants are neato...
 static const char HEAD[] PROGMEM = R"KEWL(
@@ -53,8 +74,129 @@ static const char HEAD[] PROGMEM = R"KEWL(
   <title>AIｽﾀｯｸﾁｬﾝ</title>
 </head>)KEWL";
 
+
+static const char APIKEY_HTML[] PROGMEM = R"KEWL(
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>APIキー設定</title>
+  </head>
+  <body>
+    <h1>APIキー設定</h1>
+    <form>
+      <label for="role1">OpenAI API Key</label>
+      <input type="text" id="openai" name="openai" oninput="adjustSize(this)"><br>
+      <label for="role2">VOIVETEXT API Key</label>
+      <input type="text" id="voicetext" name="voicetext" oninput="adjustSize(this)"><br>
+      <button type="button" onclick="sendData()">送信する</button>
+    </form>
+    <script>
+      function adjustSize(input) {
+        input.style.width = ((input.value.length + 1) * 8) + 'px';
+      }
+      function sendData() {
+        // FormDataオブジェクトを作成
+        const formData = new FormData();
+
+        // 各ロールの値をFormDataオブジェクトに追加
+        const openaiValue = document.getElementById("openai").value;
+        if (openaiValue !== "") formData.append("openai", openaiValue);
+
+        const voicetextValue = document.getElementById("voicetext").value;
+        if (voicetextValue !== "") formData.append("voicetext", voicetextValue);
+
+	    // POSTリクエストを送信
+	    const xhr = new XMLHttpRequest();
+	    xhr.open("POST", "/apikey_set");
+	    xhr.onload = function() {
+	      if (xhr.status === 200) {
+	        alert("データを送信しました！");
+	      } else {
+	        alert("送信に失敗しました。");
+	      }
+	    };
+	    xhr.send(formData);
+	  }
+	</script>
+  </body>
+</html>)KEWL";
+
+static const char ROLE_HTML[] PROGMEM = R"KEWL(
+<!DOCTYPE html>
+<html>
+<head>
+	<title>ロール設定</title>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<style>
+		textarea {
+			width: 80%;
+			height: 200px;
+			resize: both;
+		}
+	</style>
+</head>
+<body>
+	<h1>ロール設定</h1>
+	<form onsubmit="postData(event)">
+		<label for="textarea">Text Area:</label><br>
+		<textarea id="textarea" name="textarea"></textarea><br><br>
+		<input type="submit" value="Submit">
+	</form>
+	<script>
+		function postData(event) {
+			event.preventDefault();
+			const textAreaContent = document.getElementById("textarea").value.trim();
+//			if (textAreaContent.length > 0) {
+				const xhr = new XMLHttpRequest();
+				xhr.open("POST", "/role_set", true);
+				xhr.setRequestHeader("Content-Type", "text/plain;charset=UTF-8");
+			// xhr.onload = () => {
+			// 	location.reload(); // 送信後にページをリロード
+			// };
+			xhr.onload = () => {
+				document.open();
+				document.write(xhr.responseText);
+				document.close();
+			};
+				xhr.send(textAreaContent);
+//        document.getElementById("textarea").value = "";
+				alert("Data sent successfully!");
+//			} else {
+//				alert("Please enter some text before submitting.");
+//			}
+		}
+	</script>
+</body>
+</html>)KEWL";
 String speech_text = "";
 String speech_text_buffer = "";
+DynamicJsonDocument chat_doc(1024);
+String json_ChatString = "{\"model\": \"gpt-3.5-turbo\",\"messages\": [{\"role\": \"user\", \"content\": \"""\"}]}";
+  // String json_ChatString =
+  // "{\"model\": \"gpt-3.5-turbo\",\
+  //  \"messages\": [\
+  //                 {\"role\": \"user\", \"content\": \"" + text + "\"},\
+  //                 {\"role\": \"system\", \"content\": \"あなたは「スタックちゃん」と言う名前の小型ロボットとして振る舞ってください。\"},\
+  //                 {\"role\": \"system\", \"content\": \"あなたはの使命は人々の心を癒すことです。\"},\
+  //                 {\"role\": \"system\", \"content\": \"幼い子供の口調で話してください。\"},\
+  //                 {\"role\": \"system\", \"content\": \"あなたの友達はロボハチマルハチマルさんです。\"},\
+  //                 {\"role\": \"system\", \"content\": \"語尾には「だよ｝をつけて話してください。\"}\
+  //               ]}";
+
+//init_chat_doc(json_ChatString.c_str());
+bool init_chat_doc(const char *data)
+{
+  DeserializationError error = deserializeJson(chat_doc, data);
+  if (error) {
+    return false;
+  }
+  String json_str; //= JSON.stringify(chat_doc);
+serializeJsonPretty(chat_doc, json_str);  // 文字列をシリアルポートに出力する
+  Serial.println(json_str);
+    return true;
+}
 
 void handleRoot() {
   server.send(200, "text/plain", "hello from m5stack!");
@@ -78,14 +220,29 @@ void handleNotFound(){
 
 void handle_speech() {
   String message = server.arg("say");
+  String expression = server.arg("expression");
+  String voice = server.arg("voice");
+  int expr = 0;
+  int parms_no = 1;
+  Serial.println(expression);
+  if(expression != ""){
+    expr = expression.toInt();
+    if(expr < 0) expr = 0;
+    if(expr > 5) expr = 5;
+  }
+  if(voice != "") {
+    parms_no = voice.toInt();
+    if(parms_no < 0) parms_no = 0;
+    if(parms_no > 4) parms_no = 4;
+  }
 //  message = message + "\n";
   Serial.println(message);
   ////////////////////////////////////////
   // 音声の発声
   ////////////////////////////////////////
-  avatar.setExpression(Expression::Happy);
-  VoiceText_tts((char*)message.c_str(),tts_parms2);
-  avatar.setExpression(Expression::Neutral);
+  avatar.setExpression(expressions_table[expr]);
+  VoiceText_tts((char*)message.c_str(),tts_parms_table[parms_no]);
+//  avatar.setExpression(expressions_table[0]);
   server.send(200, "text/plain", String("OK"));
 }
 
@@ -97,14 +254,16 @@ String https_post_json(const char* url, const char* json_string, const char* roo
     {
       // Add a scoping block for HTTPClient https to make sure it is destroyed before WiFiClientSecure *client is 
       HTTPClient https;
-      https.setTimeout( 25000 ); 
+//      https.setTimeout( 25000 ); 
+      https.setTimeout( 50000 ); 
   
       Serial.print("[HTTPS] begin...\n");
       if (https.begin(*client, url)) {  // HTTPS
         Serial.print("[HTTPS] POST...\n");
         // start connection and send HTTP header
         https.addHeader("Content-Type", "application/json");
-        https.addHeader("Authorization", "Bearer YOUR_API_KEY");
+//        https.addHeader("Authorization", "Bearer YOUR_API_KEY");
+        https.addHeader("Authorization", String("Bearer ") + OPENAI_API_KEY);
         int httpCode = https.POST((uint8_t *)json_string, strlen(json_string));
   
         // httpCode will be negative on error
@@ -172,21 +331,222 @@ String chatGpt(String json_string) {
 
 void handle_chat() {
   static String response = "";
+  tts_parms_no = 1;
   String text = server.arg("text");
-  String json_string = "{\"model\": \"gpt-3.5-turbo\",\"messages\": [{\"role\": \"user\", \"content\": \"" + text + "\"}]}";
-/*  String json_string =
-  "{\"model\": \"gpt-3.5-turbo\",\
-   \"messages\": [\
-                  {\"role\": \"user\", \"content\": \"" + text + "\"},\
-                  {\"role\": \"system\", \"content\": \"あなたは「スタックちゃん」と言う名前の小型ロボットとして振る舞ってください。\"},\
-                  {\"role\": \"system\", \"content\": \"あなたはの使命は人々の心を癒すことです。\"},\
-                  {\"role\": \"system\", \"content\": \"幼い子供の口調で話してください。\"},\
-                  {\"role\": \"system\", \"content\": \"あなたの友達はロボハチマルハチマルさんです。\"},\
-                  {\"role\": \"system\", \"content\": \"語尾には「だよ｝をつけて話してください。\"}\
-                ]}";*/
+  String voice = server.arg("voice");
+  if(voice != "") {
+    tts_parms_no = voice.toInt();
+    if(tts_parms_no < 0) tts_parms_no = 0;
+    if(tts_parms_no > 4) tts_parms_no = 4;
+  }
+
+  String role = chat_doc["messages"][0]["role"];
+  if(role == "user") {chat_doc["messages"][0]["content"] = text;}
+  String json_string;
+  serializeJson(chat_doc, json_string);
+
   response = chatGpt(json_string);
   speech_text = response;
   server.send(200, "text/html", String(HEAD)+String("<body>")+response+String("</body>"));
+}
+
+void handle_apikey() {
+  // ファイルを読み込み、クライアントに送信する
+  server.send(200, "text/html", APIKEY_HTML);
+}
+
+void handle_apikey_set() {
+  // POST以外は拒否
+  if (server.method() != HTTP_POST) {
+    return;
+  }
+  // openai
+  String openai = server.arg("openai");
+  // voicetxt
+  String voicetext = server.arg("voicetext");
+ 
+  OPENAI_API_KEY = openai;
+  tts_user = voicetext;
+  Serial.println(openai);
+  Serial.println(voicetext);
+
+  uint32_t nvs_handle;
+  if (ESP_OK == nvs_open("apikey", NVS_READWRITE, &nvs_handle)) {
+    nvs_set_str(nvs_handle, "openai", openai.c_str());
+    nvs_set_str(nvs_handle, "voicetext", voicetext.c_str());
+    nvs_close(nvs_handle);
+  }
+  server.send(200, "text/plain", String("OK"));
+}
+
+void handle_role() {
+  // ファイルを読み込み、クライアントに送信する
+  server.send(200, "text/html", ROLE_HTML);
+}
+
+bool save_json(){
+  // SPIFFSをマウントする
+  if(!SPIFFS.begin(true)){
+    Serial.println("An Error has occurred while mounting SPIFFS");
+    return false;
+  }
+
+  // JSONファイルを作成または開く
+  File file = SPIFFS.open("/data.json", "w");
+  if(!file){
+    Serial.println("Failed to open file for writing");
+    return false;
+  }
+
+  // JSONデータをシリアル化して書き込む
+  serializeJson(chat_doc, file);
+  file.close();
+  return true;
+}
+
+/**
+ * アプリからテキスト(文字列)と共にRoll情報が配列でPOSTされてくることを想定してJSONを扱いやすい形に変更
+ * 出力形式をJSONに変更
+*/
+void handle_role_set() {
+  // POST以外は拒否
+  if (server.method() != HTTP_POST) {
+    return;
+  }
+  String role = server.arg("plain");
+  if (role != "") {
+    JsonArray messages = chat_doc["messages"];
+    JsonObject systemMessage1 = messages.createNestedObject();
+    systemMessage1["role"] = "system";
+    systemMessage1["content"] = role;
+  } else {
+    init_chat_doc(json_ChatString.c_str());
+  }
+
+  // JSONデータをspiffsへ出力する
+  save_json();
+
+  // 整形したJSONデータを出力するHTMLデータを作成する
+  String html = "<html><body><pre>";
+  serializeJsonPretty(chat_doc, html);
+  html += "</pre></body></html>";
+  // String json_str; //= JSON.stringify(chat_doc);
+  // serializeJsonPretty(chat_doc, json_str);  // 文字列をシリアルポートに出力する
+  // Serial.println(json_str);
+//  server.send(200, "text/html", String(HEAD)+String("<body>")+json_str+String("</body>"));
+
+  // HTMLデータをシリアルに出力する
+  Serial.println(html);
+  server.send(200, "text/html", html);
+//  server.send(200, "text/plain", String("OK"));
+};
+
+// 整形したJSONデータを出力するHTMLデータを作成する
+void handle_role_get() {
+
+  String html = "<html><body><pre>";
+  serializeJsonPretty(chat_doc, html);
+  html += "</pre></body></html>";
+
+  // HTMLデータをシリアルに出力する
+  Serial.println(html);
+  server.send(200, "text/html", String(HEAD) + html);
+};
+
+void handle_role_set1() {
+  // POST以外は拒否
+  if (server.method() != HTTP_POST) {
+    return;
+  }
+  
+  JsonArray messages = chat_doc["messages"];
+  
+  // Roll[1]
+  String role1 = server.arg("role1");
+  if (role1 != "") {
+    JsonObject systemMessage1 = messages.createNestedObject();
+    systemMessage1["role"] = "system";
+    systemMessage1["content"] = role1;
+  }
+  // Roll[2]
+  String role2 = server.arg("role2");
+  if (role2 != "") {
+    JsonObject systemMessage2 = messages.createNestedObject();
+    systemMessage2["role"] = "system";
+    systemMessage2["content"] = role2;
+  }
+  // Roll[3]
+  String role3 = server.arg("role3");
+  if (role3 != "") {
+    JsonObject systemMessage3 = messages.createNestedObject();
+    systemMessage3["role"] = "system";
+    systemMessage3["content"] = role3;
+  }
+  // Roll[4]
+  String role4 = server.arg("role4");
+  if (role4 != "") {
+    JsonObject systemMessage4 = messages.createNestedObject();
+    systemMessage4["role"] = "system";
+    systemMessage4["content"] = role4;
+  }
+  // Roll[5]
+  String role5 = server.arg("role5");
+  if (role5 != "") {
+    JsonObject systemMessage5 = messages.createNestedObject();
+    systemMessage5["role"] = "system";
+    systemMessage5["content"] = role5;
+  }
+  // Roll[6]
+  String role6 = server.arg("role6");
+  if (role6 != "") {
+    JsonObject systemMessage6 = messages.createNestedObject();
+    systemMessage6["role"] = "system";
+    systemMessage6["content"] = role6;
+  }
+  // Roll[7]
+  String role7 = server.arg("role7");
+  if (role7 != "") {
+    JsonObject systemMessage7 = messages.createNestedObject();
+    systemMessage7["role"] = "system";
+    systemMessage7["content"] = role7;
+  }
+  // Roll[8]
+  String role8 = server.arg("role8");
+  if (role8 != "") {
+    JsonObject systemMessage8 = messages.createNestedObject();
+    systemMessage8["role"] = "system";
+    systemMessage8["content"] = role8;
+  }
+/*   
+  // JSON配列生成
+  DynamicJsonDocument response(1024);
+  response["status"] = "failed";
+  
+  // JSON出力
+  String jsonResponse;
+  
+  try {
+    String json_string;
+    serializeJson(chat_doc, json_string);
+    message = chatGpt(json_string);
+    response["status"] = "success";
+    response["youre_message"] = text; 
+    response["stackchan_message"] = message; 
+    serializeJson(response, jsonResponse);
+    
+    // 音声
+    speech_text = message;
+  } catch(...) {
+    response["message"] = "something wrong."; 
+    serializeJson(response, jsonResponse);
+  }
+  server.send(200, "application/json", jsonResponse);
+ */
+  String json_str; //= JSON.stringify(chat_doc);
+  serializeJsonPretty(chat_doc, json_str);  // 文字列をシリアルポートに出力する
+  Serial.println(json_str);
+  server.send(200, "text/html", String(HEAD)+String("<body>")+json_str+String("</body>"));
+//  server.send(200, "text/plain", String("OK"));
 }
 
 void handle_face() {
@@ -352,6 +712,74 @@ struct box_t
 };
 static box_t box_servo;
 
+void Wifi_setup() {
+  // 前回接続時情報で接続する
+  while (WiFi.status() != WL_CONNECTED) {
+    M5.Display.print(".");
+    Serial.print(".");
+    delay(500);
+    // 10秒以上接続できなかったら抜ける
+    if ( 10000 < millis() ) {
+      break;
+    }
+  }
+  M5.Display.println("");
+  Serial.println("");
+  // 未接続の場合にはSmartConfig待受
+  if ( WiFi.status() != WL_CONNECTED ) {
+    WiFi.mode(WIFI_STA);
+    WiFi.beginSmartConfig();
+    M5.Display.println("Waiting for SmartConfig");
+    Serial.println("Waiting for SmartConfig");
+    while (!WiFi.smartConfigDone()) {
+      delay(500);
+      M5.Display.print("#");
+      Serial.print("#");
+      // 30秒以上接続できなかったら抜ける
+      if ( 30000 < millis() ) {
+        Serial.println("");
+        Serial.println("Reset");
+        ESP.restart();
+      }
+    }
+    // Wi-fi接続
+    M5.Display.println("");
+    Serial.println("");
+    M5.Display.println("Waiting for WiFi");
+    Serial.println("Waiting for WiFi");
+    while (WiFi.status() != WL_CONNECTED) {
+      delay(500);
+      M5.Display.print(".");
+      Serial.print(".");
+      // 60秒以上接続できなかったら抜ける
+      if ( 60000 < millis() ) {
+        Serial.println("");
+        Serial.println("Reset");
+        ESP.restart();
+      }
+    }
+    // M5.Display.println("");
+    // Serial.println("");
+    // M5.Display.println("WiFi Connected.");
+    // Serial.println("WiFi Connected.");
+  }
+  // M5.Display.print("IP Address: ");
+  // Serial.print("IP Address: ");
+  // M5.Display.println(WiFi.localIP());
+  // Serial.println(WiFi.localIP());
+}
+
+// void info_spiffs(){
+//   FSInfo fs_info;
+//   SPIFFS.info(fs_info);
+//   Serial.print("SPIFFS Total bytes: ");
+//   Serial.println(fs_info.totalBytes);
+//   Serial.print("SPIFFS Used bytes: ");
+//   Serial.println(fs_info.usedBytes);
+//   Serial.print("SPIFFS Free bytes: ");
+//   Serial.println(fs_info.totalBytes - fs_info.usedBytes);
+// }
+
 void setup()
 {
   auto cfg = M5.config();
@@ -381,13 +809,97 @@ void setup()
   Serial.println("Connecting to WiFi");
   WiFi.disconnect();
   WiFi.softAPdisconnect(true);
-  WiFi.mode(WIFI_STA);  WiFi.begin(SSID, PASSWORD);
-  M5.Lcd.print("Connecting");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(250);
-    Serial.print(".");
-    M5.Lcd.print(".");
+  WiFi.mode(WIFI_STA);
+#ifndef USE_SDCARD
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  OPENAI_API_KEY = String(OPENAI_APIKEY);
+  tts_user = String(VOICETEXT_APIKEY);
+#else
+  /// settings
+  if (SD.begin(GPIO_NUM_4, SPI, 25000000)) {
+    /// wifi
+    auto fs = SD.open("/wifi.txt", FILE_READ);
+    if(fs) {
+      size_t sz = fs.size();
+      char buf[sz + 1];
+      fs.read((uint8_t*)buf, sz);
+      buf[sz] = 0;
+      fs.close();
+
+      int y = 0;
+      for(int x = 0; x < sz; x++) {
+        if(buf[x] == 0x0a || buf[x] == 0x0d)
+          buf[x] = 0;
+        else if (!y && x > 0 && !buf[x - 1] && buf[x])
+          y = x;
+      }
+      WiFi.begin(buf, &buf[y]);
+    } else {
+       WiFi.begin();
+    }
+
+    uint32_t nvs_handle;
+    if (ESP_OK == nvs_open("apikey", NVS_READWRITE, &nvs_handle)) {
+      /// radiko-premium
+      fs = SD.open("/apikey.txt", FILE_READ);
+      if(fs) {
+        size_t sz = fs.size();
+        char buf[sz + 1];
+        fs.read((uint8_t*)buf, sz);
+        buf[sz] = 0;
+        fs.close();
+  
+        int y = 0;
+        for(int x = 0; x < sz; x++) {
+          if(buf[x] == 0x0a || buf[x] == 0x0d)
+            buf[x] = 0;
+          else if (!y && x > 0 && !buf[x - 1] && buf[x])
+            y = x;
+        }
+
+        nvs_set_str(nvs_handle, "openai", buf);
+        nvs_set_str(nvs_handle, "voicetext", &buf[y]);
+  Serial.println(buf);
+  Serial.println(&buf[y]);
+      }
+      
+      nvs_close(nvs_handle);
+    }
+    SD.end();
+  } else {
+    WiFi.begin();
   }
+
+  {
+    uint32_t nvs_handle;
+    if (ESP_OK == nvs_open("apikey", NVS_READONLY, &nvs_handle)) {
+  Serial.println("nvs_open");
+
+      size_t length1;
+      size_t length2;
+      if(ESP_OK == nvs_get_str(nvs_handle, "openai", nullptr, &length1) && ESP_OK == nvs_get_str(nvs_handle, "voicetext", nullptr, &length2) && length1 && length2) {
+  Serial.println("nvs_get_str");
+        char openai_apikey[length1 + 1];
+        char voicetext_apikey[length2 + 1];
+        if(ESP_OK == nvs_get_str(nvs_handle, "openai", openai_apikey, &length1) && ESP_OK == nvs_get_str(nvs_handle, "voicetext", voicetext_apikey, &length2)) {
+          OPENAI_API_KEY = String(openai_apikey);
+          tts_user = String(voicetext_apikey);
+  Serial.println(OPENAI_API_KEY);
+  Serial.println(tts_user);
+        }
+  }
+      nvs_close(nvs_handle);
+    }
+  }
+  
+#endif
+  M5.Lcd.print("Connecting");
+  // while (WiFi.status() != WL_CONNECTED) {
+  //   delay(250);
+  //   Serial.print(".");
+  //   M5.Lcd.print(".");
+  // }
+  Wifi_setup();
   M5.Lcd.println("\nConnected");
   Serial.printf_P(PSTR("Go to http://"));
   M5.Lcd.print("Go to http://");
@@ -409,7 +921,34 @@ void setup()
   server.on("/speech", handle_speech);
   server.on("/face", handle_face);
   server.on("/chat", handle_chat);
+  server.on("/apikey", handle_apikey);
+  server.on("/apikey_set", HTTP_POST, handle_apikey_set);
+  server.on("/role", handle_role);
+  server.on("/role_set", HTTP_POST, handle_role_set);
+  server.on("/role_get", handle_role_get);
   server.onNotFound(handleNotFound);
+
+  init_chat_doc(json_ChatString.c_str());
+  // SPIFFSをマウントする
+  if(SPIFFS.begin(true)){
+    // JSONファイルを開く
+    File file = SPIFFS.open("/data.json", "r");
+    if(file){
+      DeserializationError error = deserializeJson(chat_doc, file);
+      if(error){
+        Serial.println("Failed to deserialize JSON");
+//      init_chat_doc(json_ChatString.c_str());
+      }
+      String json_str; 
+      serializeJsonPretty(chat_doc, json_str);  // 文字列をシリアルポートに出力する
+      Serial.println(json_str);
+//      info_spiffs();
+    } else {
+      Serial.println("Failed to open file for reading");
+    }
+  } else {
+    Serial.println("An Error has occurred while mounting SPIFFS");
+  }
 
   server.begin();
   Serial.println("HTTP server started");
@@ -489,7 +1028,7 @@ void loop()
       speech_text_buffer = "";
     }
     avatar.setExpression(Expression::Happy);
-    VoiceText_tts((char*)sentence.c_str(), tts_parms2);
+    VoiceText_tts((char*)sentence.c_str(), tts_parms_table[tts_parms_no]);
     avatar.setExpression(Expression::Neutral);
   }
 
@@ -503,6 +1042,7 @@ void loop()
       mp3->stop();
       if(file != nullptr){delete file; file = nullptr;}
       Serial.println("mp3 stop");
+      avatar.setExpression(Expression::Neutral);
       if(speech_text_buffer != ""){
         String sentence = speech_text_buffer;
         int dotIndex = speech_text_buffer.indexOf("。");
@@ -515,7 +1055,7 @@ void loop()
           speech_text_buffer = "";
         }
         avatar.setExpression(Expression::Happy);
-        VoiceText_tts((char*)sentence.c_str(), tts_parms2);
+        VoiceText_tts((char*)sentence.c_str(), tts_parms_table[tts_parms_no]);
         avatar.setExpression(Expression::Neutral);
       }
     }
