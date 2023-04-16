@@ -4,6 +4,10 @@
 #include <M5Unified.h>
 #include <nvs.h>
 #include <Avatar.h>
+//#define USE_DOGFACE
+#ifdef USE_DOGFACE
+#include <faces/DogFace.h>
+#endif
 
 #include <AudioOutput.h>
 #include <AudioFileSourceBuffer.h>
@@ -18,6 +22,13 @@
 #include <ArduinoJson.h>
 #include <ESP32WebServer.h>
 #include <ESPmDNS.h>
+#include <deque>
+
+// 保存する質問と回答の最大数
+const int MAX_HISTORY = 5;
+
+// 過去の質問と回答を保存するデータ構造
+std::deque<String> chatHistory;
 
 #define USE_SDCARD
 #define WIFI_SSID "SET YOUR WIFI SSID"
@@ -41,6 +52,8 @@
 #endif
 #endif
 
+/// set M5Speaker virtual channel (0-7)
+static constexpr uint8_t m5spk_virtual_channel = 0;
 using namespace m5avatar;
 Avatar avatar;
 const Expression expressions_table[] = {
@@ -56,13 +69,13 @@ ESP32WebServer server(80);
 
 String OPENAI_API_KEY = "";
 
-char *text1 = "みなさんこんにちは、私の名前はスタックチャンです、よろしくね。";
-char *tts_parms1 ="&emotion_level=4&emotion=happiness&format=mp3&speaker=takeru&volume=200&speed=100&pitch=130"; // he has natural(16kHz) mp3 voice
-char *tts_parms2 ="&emotion=happiness&format=mp3&speaker=hikari&volume=200&speed=120&pitch=130"; // he has natural(16kHz) mp3 voice
-char *tts_parms3 ="&emotion=anger&format=mp3&speaker=bear&volume=200&speed=120&pitch=100"; // he has natural(16kHz) mp3 voice
-char *tts_parms4 ="&emotion_level=2&emotion=happiness&format=mp3&speaker=haruka&volume=200&speed=80&pitch=70";
-char *tts_parms5 ="&emotion_level=4&emotion=happiness&format=mp3&speaker=santa&volume=200&speed=120&pitch=90";
-char *tts_parms_table[5] = {tts_parms1,tts_parms2,tts_parms3,tts_parms4,tts_parms5};
+char* text1 = "みなさんこんにちは、私の名前はスタックチャンです、よろしくね。";
+char* tts_parms1 ="&emotion_level=4&emotion=happiness&format=mp3&speaker=takeru&volume=200&speed=100&pitch=130"; // he has natural(16kHz) mp3 voice
+char* tts_parms2 ="&emotion=happiness&format=mp3&speaker=hikari&volume=200&speed=120&pitch=130"; // he has natural(16kHz) mp3 voice
+char* tts_parms3 ="&emotion=anger&format=mp3&speaker=bear&volume=200&speed=120&pitch=100"; // he has natural(16kHz) mp3 voice
+char* tts_parms4 ="&emotion_level=2&emotion=happiness&format=mp3&speaker=haruka&volume=200&speed=80&pitch=70";
+char* tts_parms5 ="&emotion_level=4&emotion=happiness&format=mp3&speaker=santa&volume=200&speed=120&pitch=90";
+char* tts_parms_table[5] = {tts_parms1,tts_parms2,tts_parms3,tts_parms4,tts_parms5};
 int tts_parms_no = 1;
 
 // C++11 multiline string constants are neato...
@@ -140,7 +153,7 @@ static const char ROLE_HTML[] PROGMEM = R"KEWL(
 <body>
 	<h1>ロール設定</h1>
 	<form onsubmit="postData(event)">
-		<label for="textarea">Text Area:</label><br>
+		<label for="textarea">ここにロールを記述してください。:</label><br>
 		<textarea id="textarea" name="textarea"></textarea><br><br>
 		<input type="submit" value="Submit">
 	</form>
@@ -172,7 +185,8 @@ static const char ROLE_HTML[] PROGMEM = R"KEWL(
 </html>)KEWL";
 String speech_text = "";
 String speech_text_buffer = "";
-DynamicJsonDocument chat_doc(1024);
+//DynamicJsonDocument chat_doc(1024);
+DynamicJsonDocument chat_doc(1024*10);
 String json_ChatString = "{\"model\": \"gpt-3.5-turbo\",\"messages\": [{\"role\": \"user\", \"content\": \"""\"}]}";
   // String json_ChatString =
   // "{\"model\": \"gpt-3.5-turbo\",\
@@ -190,6 +204,7 @@ bool init_chat_doc(const char *data)
 {
   DeserializationError error = deserializeJson(chat_doc, data);
   if (error) {
+    Serial.println("DeserializationError");
     return false;
   }
   String json_str; //= JSON.stringify(chat_doc);
@@ -329,6 +344,8 @@ String chatGpt(String json_string) {
   return response;
 }
 
+String InitBuffer = "";
+
 void handle_chat() {
   static String response = "";
   tts_parms_no = 1;
@@ -339,6 +356,59 @@ void handle_chat() {
     if(tts_parms_no < 0) tts_parms_no = 0;
     if(tts_parms_no > 4) tts_parms_no = 4;
   }
+  Serial.println(InitBuffer);
+  init_chat_doc(InitBuffer.c_str());
+//  init_chat_doc(json_ChatString.c_str());
+  // 質問をチャット履歴に追加
+  chatHistory.push_back(text);
+    // チャット履歴が最大数を超えた場合、古い質問と回答を削除
+  if (chatHistory.size() > MAX_HISTORY * 2)
+  {
+    chatHistory.pop_front();
+    chatHistory.pop_front();
+  }
+
+  for (int i = 0; i < chatHistory.size(); i++)
+  {
+    JsonArray messages = chat_doc["messages"];
+    JsonObject systemMessage1 = messages.createNestedObject();
+    if(i % 2 == 0) {
+      systemMessage1["role"] = "user";
+    } else {
+      systemMessage1["role"] = "assistant";
+    }
+    systemMessage1["content"] = chatHistory[i];
+  }
+
+  String json_string;
+  serializeJson(chat_doc, json_string);
+  if(speech_text=="" && speech_text_buffer == "") {
+    response = chatGpt(json_string);
+    speech_text = response;
+    // 返答をチャット履歴に追加
+    chatHistory.push_back(response);
+  } else {
+    response = "busy";
+  }
+  // Serial.printf("chatHistory.max_size %d \n",chatHistory.max_size());
+  // Serial.printf("chatHistory.size %d \n",chatHistory.size());
+  // for (int i = 0; i < chatHistory.size(); i++)
+  // {
+  //   Serial.print(i);
+  //   Serial.println("= "+chatHistory[i]);
+  // }
+  serializeJsonPretty(chat_doc, json_string);
+  Serial.println("====================");
+  Serial.println(json_string);
+  Serial.println("====================");
+  server.send(200, "text/html", String(HEAD)+String("<body>")+response+String("</body>"));
+}
+
+
+String Role_JSON = "";
+void exec_chatGPT(String text) {
+  static String response = "";
+  init_chat_doc(Role_JSON.c_str());
 
   String role = chat_doc["messages"][0]["role"];
   if(role == "user") {chat_doc["messages"][0]["content"] = text;}
@@ -347,7 +417,7 @@ void handle_chat() {
 
   response = chatGpt(json_string);
   speech_text = response;
-  server.send(200, "text/html", String(HEAD)+String("<body>")+response+String("</body>"));
+//  server.send(200, "text/html", String(HEAD)+String("<body>")+response+String("</body>"));
 }
 
 void handle_apikey() {
@@ -415,6 +485,40 @@ void handle_role_set() {
   }
   String role = server.arg("plain");
   if (role != "") {
+    init_chat_doc(InitBuffer.c_str());
+    JsonArray messages = chat_doc["messages"];
+    JsonObject systemMessage1 = messages.createNestedObject();
+    systemMessage1["role"] = "system";
+    systemMessage1["content"] = role;
+//    serializeJson(chat_doc, InitBuffer);
+  } else {
+    init_chat_doc(json_ChatString.c_str());
+  }
+  InitBuffer="";
+  serializeJson(chat_doc, InitBuffer);
+  Serial.println("InitBuffer = " + InitBuffer);
+  Role_JSON = InitBuffer;
+
+  // JSONデータをspiffsへ出力する
+  save_json();
+
+  // 整形したJSONデータを出力するHTMLデータを作成する
+  String html = "<html><body><pre>";
+  serializeJsonPretty(chat_doc, html);
+  html += "</pre></body></html>";
+
+  // HTMLデータをシリアルに出力する
+  Serial.println(html);
+  server.send(200, "text/html", html);
+//  server.send(200, "text/plain", String("OK"));
+};
+void handle_role_set2() {
+  // POST以外は拒否
+  if (server.method() != HTTP_POST) {
+    return;
+  }
+  String role = server.arg("plain");
+  if (role != "") {
     JsonArray messages = chat_doc["messages"];
     JsonObject systemMessage1 = messages.createNestedObject();
     systemMessage1["role"] = "system";
@@ -458,8 +562,22 @@ void handle_role_set1() {
   if (server.method() != HTTP_POST) {
     return;
   }
+  /* 
+  static String message = "";
+  // [Text]
+  String text = server.arg("text");
   
+  // 新規
+  DynamicJsonDocument doc(1024);
+  doc["model"] = "gpt-3.5-turbo";
+//  JsonArray messages = doc.createNestedArray("messages");
+ */
   JsonArray messages = chat_doc["messages"];
+  
+  // Roll[User]
+  // JsonObject userMessage = messages.createNestedObject();
+  // userMessage["role"] = "user";
+  // userMessage["content"] = text;
   
   // Roll[1]
   String role1 = server.arg("role1");
@@ -565,8 +683,25 @@ void handle_face() {
   server.send(200, "text/plain", String("OK"));
 }
 
+void handle_setting() {
+  String value = server.arg("volume");
+//  volume = volume + "\n";
+  Serial.println(value);
+  if(value == "") value = "180";
+  size_t volume = value.toInt();
+  uint32_t nvs_handle;
+  if (ESP_OK == nvs_open("setting", NVS_READWRITE, &nvs_handle)) {
+    if(volume > 255) volume = 255;
+    nvs_set_u32(nvs_handle, "volume", volume);
+    nvs_close(nvs_handle);
+  }
+  M5.Speaker.setVolume(volume);
+  M5.Speaker.setChannelVolume(m5spk_virtual_channel, volume);
+  server.send(200, "text/plain", String("OK"));
+}
+
 /// set M5Speaker virtual channel (0-7)
-static constexpr uint8_t m5spk_virtual_channel = 0;
+//static constexpr uint8_t m5spk_virtual_channel = 0;
 static AudioOutputM5Speaker out(&M5.Speaker, m5spk_virtual_channel);
 AudioGeneratorMP3 *mp3;
 AudioFileSourceVoiceTextStream *file = nullptr;
@@ -676,6 +811,10 @@ void Servo_setup() {
   servo_x.setEasingType(EASE_QUADRATIC_IN_OUT);
   servo_y.setEasingType(EASE_QUADRATIC_IN_OUT);
   setSpeedForAllServos(30);
+
+  servo_x.setEaseTo(START_DEGREE_VALUE_X); 
+  servo_y.setEaseTo(START_DEGREE_VALUE_Y);
+  synchronizeAllServosStartAndWaitForAllServosToStop();
 #endif
 }
 
@@ -758,15 +897,7 @@ void Wifi_setup() {
         ESP.restart();
       }
     }
-    // M5.Display.println("");
-    // Serial.println("");
-    // M5.Display.println("WiFi Connected.");
-    // Serial.println("WiFi Connected.");
   }
-  // M5.Display.print("IP Address: ");
-  // Serial.print("IP Address: ");
-  // M5.Display.println(WiFi.localIP());
-  // Serial.println(WiFi.localIP());
 }
 
 // void info_spiffs(){
@@ -805,6 +936,7 @@ void setup()
   }
   M5.Speaker.begin();
 
+  Servo_setup();
   M5.Lcd.setTextSize(2);
   Serial.println("Connecting to WiFi");
   WiFi.disconnect();
@@ -859,8 +991,8 @@ void setup()
 
         nvs_set_str(nvs_handle, "openai", buf);
         nvs_set_str(nvs_handle, "voicetext", &buf[y]);
-  Serial.println(buf);
-  Serial.println(&buf[y]);
+        Serial.println(buf);
+        Serial.println(&buf[y]);
       }
       
       nvs_close(nvs_handle);
@@ -873,37 +1005,52 @@ void setup()
   {
     uint32_t nvs_handle;
     if (ESP_OK == nvs_open("apikey", NVS_READONLY, &nvs_handle)) {
-  Serial.println("nvs_open");
+      Serial.println("nvs_open");
 
       size_t length1;
       size_t length2;
       if(ESP_OK == nvs_get_str(nvs_handle, "openai", nullptr, &length1) && ESP_OK == nvs_get_str(nvs_handle, "voicetext", nullptr, &length2) && length1 && length2) {
-  Serial.println("nvs_get_str");
+        Serial.println("nvs_get_str");
         char openai_apikey[length1 + 1];
         char voicetext_apikey[length2 + 1];
         if(ESP_OK == nvs_get_str(nvs_handle, "openai", openai_apikey, &length1) && ESP_OK == nvs_get_str(nvs_handle, "voicetext", voicetext_apikey, &length2)) {
           OPENAI_API_KEY = String(openai_apikey);
           tts_user = String(voicetext_apikey);
-  Serial.println(OPENAI_API_KEY);
-  Serial.println(tts_user);
+          Serial.println(OPENAI_API_KEY);
+          Serial.println(tts_user);
         }
-  }
+      }
       nvs_close(nvs_handle);
     }
   }
   
 #endif
+  {
+    uint32_t nvs_handle;
+    if (ESP_OK == nvs_open("setting", NVS_READONLY, &nvs_handle)) {
+      size_t volume;
+      nvs_get_u32(nvs_handle, "volume", &volume);
+      if(volume > 255) volume = 255;
+      M5.Speaker.setVolume(volume);
+      M5.Speaker.setChannelVolume(m5spk_virtual_channel, volume);
+      nvs_close(nvs_handle);
+    } else {
+      if (ESP_OK == nvs_open("setting", NVS_READWRITE, &nvs_handle)) {
+        size_t volume = 180;
+        nvs_set_u32(nvs_handle, "volume", volume);
+        nvs_close(nvs_handle);
+        M5.Speaker.setVolume(volume);
+        M5.Speaker.setChannelVolume(m5spk_virtual_channel, volume);
+      }
+    }
+  }
+
   M5.Lcd.print("Connecting");
-  // while (WiFi.status() != WL_CONNECTED) {
-  //   delay(250);
-  //   Serial.print(".");
-  //   M5.Lcd.print(".");
-  // }
   Wifi_setup();
   M5.Lcd.println("\nConnected");
   Serial.printf_P(PSTR("Go to http://"));
   M5.Lcd.print("Go to http://");
-  Serial.print(WiFi.localIP());
+  Serial.println(WiFi.localIP());
   M5.Lcd.println(WiFi.localIP());
 
    if (MDNS.begin("m5stack")) {
@@ -922,6 +1069,7 @@ void setup()
   server.on("/face", handle_face);
   server.on("/chat", handle_chat);
   server.on("/apikey", handle_apikey);
+  server.on("/setting", handle_setting);
   server.on("/apikey_set", HTTP_POST, handle_apikey_set);
   server.on("/role", handle_role);
   server.on("/role_set", HTTP_POST, handle_role_set);
@@ -937,8 +1085,9 @@ void setup()
       DeserializationError error = deserializeJson(chat_doc, file);
       if(error){
         Serial.println("Failed to deserialize JSON");
-//      init_chat_doc(json_ChatString.c_str());
       }
+      serializeJson(chat_doc, InitBuffer);
+      Role_JSON = InitBuffer;
       String json_str; 
       serializeJsonPretty(chat_doc, json_str);  // 文字列をシリアルポートに出力する
       Serial.println(json_str);
@@ -960,22 +1109,130 @@ void setup()
 
   audioLogger = &Serial;
   mp3 = new AudioGeneratorMP3();
-  mp3->RegisterStatusCB(StatusCallback, (void*)"mp3");
+//  mp3->RegisterStatusCB(StatusCallback, (void*)"mp3");
 
-  Servo_setup();
+//  Servo_setup();
 
+#ifdef USE_DOGFACE
+  static Face* face = new DogFace();
+  static ColorPalette* cp = new ColorPalette();
+  cp->set(COLOR_PRIMARY, TFT_BLACK);  //AtaruFace
+  cp->set(COLOR_SECONDARY, TFT_WHITE);
+  cp->set(COLOR_BACKGROUND, TFT_WHITE);
+  avatar.setFace(face);
+  avatar.setColorPalette(*cp);
+  avatar.init(8); //Color Depth8
+#else
   avatar.init();
+#endif
   avatar.addTask(lipSync, "lipSync");
   avatar.addTask(servo, "servo");
   avatar.setSpeechFont(&fonts::efontJA_16);
-
-  M5.Speaker.setVolume(250);
+//  M5.Speaker.setVolume(200);
   box_servo.setupBox(80, 120, 80, 80);
+}
+
+String keywords[] = {"(Neutral)", "(Happy)", "(Sleepy)", "(Doubt)", "(Sad)", "(Angry)"};
+void addPeriodBeforeKeyword(String &input, String keywords[], int numKeywords) {
+  int prevIndex = 0;
+  for (int i = 0; i < numKeywords; i++) {
+    int index = input.indexOf(keywords[i]);
+    while (index != -1) {
+      if (index > 0 && input.charAt(index-1) != '。') {
+        input = input.substring(0, index) + "。" + input.substring(index);
+      }
+      prevIndex = index + keywords[i].length() + 1; // update prevIndex to after the keyword and period
+      index = input.indexOf(keywords[i], prevIndex);
+    }
+  }
+//  Serial.println(input);
+}
+
+int expressionIndx = -1;
+String expressionString[] = {"Neutral","Happy","Sleepy","Doubt","Sad","Angry",""};
+String emotion_parms[]= {
+  "&emotion_level=2&emotion=happiness",
+  "&emotion_level=3&emotion=happiness",
+  "&emotion_level=2&emotion=sadness",
+  "&emotion_level=1&emotion=sadness",
+  "&emotion_level=4&emotion=sadness",
+  "&emotion_level=4&emotion=anger"};
+String tts_parms01 ="&format=mp3&speaker=takeru&volume=200&speed=100&pitch=130";
+String tts_parms02 ="&format=mp3&speaker=hikari&volume=200&speed=120&pitch=130";
+String tts_parms03 ="&format=mp3&speaker=bear&volume=200&speed=120&pitch=100";
+String tts_parms04 ="&format=mp3&speaker=haruka&volume=200&speed=80&pitch=70";
+String tts_parms05 ="&format=mp3&speaker=santa&volume=200&speed=120&pitch=90";
+String tts_parms[5] = {tts_parms01,tts_parms02,tts_parms03,tts_parms04,tts_parms05};
+//int tts_parms_no = 1;
+int tts_emotion_no = 0;
+//emotion_parms[expressionIndx]+tts_parms[tts_parms_no]
+String random_words[18] = {"あなたは誰","楽しい","怒った","可愛い","悲しい","眠い","ジョークを言って","泣きたい","怒ったぞ","こんにちは","お疲れ様","詩を書いて","疲れた","お腹空いた","嫌いだ","苦しい","俳句を作って","歌をうたって"};
+int random_time = -1;
+bool random_speak = true;
+
+void getExpression(String &sentence, int &expressionIndx){
+    Serial.println("sentence="+sentence);
+    int startIndex = sentence.indexOf("(");
+    if(startIndex >= 0) {
+      int endIndex = sentence.indexOf(")", startIndex);
+      if(endIndex > 0) {
+        String extractedString = sentence.substring(startIndex + 1, endIndex); // 括弧を含まない部分文字列を抽出
+//        Serial.println("extractedString="+extractedString);
+        sentence.remove(startIndex, endIndex - startIndex + 1); // 括弧を含む部分文字列を削除
+//        Serial.println("sentence="+sentence);
+        if(extractedString != "") {
+          expressionIndx = 0;
+          while(1) {
+            if(expressionString[expressionIndx] == extractedString)
+            {
+              avatar.setExpression(expressions_table[expressionIndx]);
+              break;
+            }
+            if(expressionString[expressionIndx] == "") {
+              expressionIndx = -1;
+              break;
+            }
+            expressionIndx++;
+          }
+        } else {
+          expressionIndx = -1;
+        }
+      }
+    }
 }
 
 void loop()
 {
   static int lastms = 0;
+  static int lastms1 = 0;
+
+  if (random_time >= 0 && millis() - lastms1 > random_time)
+  {
+    lastms1 = millis();
+    random_time = 40000 + 1000 * random(30);
+    if (!mp3->isRunning() && speech_text=="" && speech_text_buffer == "") {
+      exec_chatGPT(random_words[random(18)]);
+    }
+  }
+
+  if (M5.BtnA.wasPressed())
+  {
+    M5.Speaker.tone(1000, 100);
+    String tmp;
+    if(random_speak) {
+      tmp = "独り言始めます。";
+      lastms1 = millis();
+      random_time = 40000 + 1000 * random(30);
+    } else {
+      tmp = "独り言やめます。";
+      random_time = -1;
+    }
+    random_speak = !random_speak;
+    avatar.setExpression(Expression::Happy);
+    VoiceText_tts((char*)tmp.c_str(), tts_parms2);
+    avatar.setExpression(Expression::Neutral);
+    Serial.println("mp3 begin");
+  }
 
   // if (Serial.available()) {
   //   char kstr[256];
@@ -1017,6 +1274,10 @@ void loop()
   if(speech_text != ""){
     speech_text_buffer = speech_text;
     speech_text = "";
+    addPeriodBeforeKeyword(speech_text_buffer, keywords, 6);
+    Serial.println("-----------------------------");
+    Serial.println(speech_text_buffer);
+//---------------------------------
     String sentence = speech_text_buffer;
     int dotIndex = speech_text_buffer.indexOf("。");
     if (dotIndex != -1) {
@@ -1027,22 +1288,29 @@ void loop()
     }else{
       speech_text_buffer = "";
     }
-    avatar.setExpression(Expression::Happy);
-    VoiceText_tts((char*)sentence.c_str(), tts_parms_table[tts_parms_no]);
-    avatar.setExpression(Expression::Neutral);
+//----------------
+    getExpression(sentence, expressionIndx);
+//----------------
+    if(expressionIndx < 0) avatar.setExpression(Expression::Happy);
+    if(expressionIndx < 0) VoiceText_tts((char*)sentence.c_str(), tts_parms_table[tts_parms_no]);
+    else {
+      String tmp = emotion_parms[expressionIndx]+tts_parms[tts_parms_no];
+      VoiceText_tts((char*)sentence.c_str(), (char*)tmp.c_str());
+    }
+    if(expressionIndx < 0) avatar.setExpression(Expression::Neutral);
   }
 
   if (mp3->isRunning()) {
-    if (millis()-lastms > 1000) {
-      lastms = millis();
-      Serial.printf("Running for %d ms...\n", lastms);
-      Serial.flush();
-     }
+    // if (millis()-lastms > 1000) {
+    //   lastms = millis();
+    //   Serial.printf("Running for %d ms...\n", lastms);
+    //   Serial.flush();
+    //  }
     if (!mp3->loop()) {
       mp3->stop();
       if(file != nullptr){delete file; file = nullptr;}
       Serial.println("mp3 stop");
-      avatar.setExpression(Expression::Neutral);
+//      avatar.setExpression(Expression::Neutral);
       if(speech_text_buffer != ""){
         String sentence = speech_text_buffer;
         int dotIndex = speech_text_buffer.indexOf("。");
@@ -1054,9 +1322,19 @@ void loop()
         }else{
           speech_text_buffer = "";
         }
-        avatar.setExpression(Expression::Happy);
-        VoiceText_tts((char*)sentence.c_str(), tts_parms_table[tts_parms_no]);
+//----------------
+        getExpression(sentence, expressionIndx);
+//----------------
+        if(expressionIndx < 0) avatar.setExpression(Expression::Happy);
+        if(expressionIndx < 0)VoiceText_tts((char*)sentence.c_str(), tts_parms_table[tts_parms_no]);
+        else { 
+          String tmp = emotion_parms[expressionIndx]+tts_parms[tts_parms_no];
+          VoiceText_tts((char*)sentence.c_str(), (char*)tmp.c_str());
+        }
+        if(expressionIndx < 0) avatar.setExpression(Expression::Neutral);
+      } else {
         avatar.setExpression(Expression::Neutral);
+          expressionIndx = -1;
       }
     }
   } else {
