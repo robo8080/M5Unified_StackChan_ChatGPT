@@ -269,8 +269,7 @@ String https_post_json(const char* url, const char* json_string, const char* roo
     {
       // Add a scoping block for HTTPClient https to make sure it is destroyed before WiFiClientSecure *client is 
       HTTPClient https;
-//      https.setTimeout( 25000 ); 
-      https.setTimeout( 50000 ); 
+      https.setTimeout( 60000 ); 
   
       Serial.print("[HTTPS] begin...\n");
       if (https.begin(*client, url)) {  // HTTPS
